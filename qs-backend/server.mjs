@@ -91,6 +91,49 @@ function saveConfig() {
 }
 saveConfig();
 
+// ── Cookie 自动导入(后端没有 Cookie 时,扫约定路径)──
+// 2026-10-11 真机教训:登录工具把 Cookie 写在自己的输出目录,游戏后端 config.json 始终是空的,
+// 所有认证请求都 1000016「登录失效」。除了运行期 /api/cookie 推送,再给一条静态兜底:
+// 工具/用户把 qishui-cookie.txt 放到约定位置,后端启动即收。
+const COOKIE_IMPORT_PATHS = [
+    path.join(__dirname, 'qishui-cookie.txt'),
+    path.join(process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming'), 'qishui-cookie', 'qishui-cookie.txt'),
+    path.join(process.env.USERPROFILE || '', '.qishui-cookie.txt'),
+];
+function importCookieFromConventionPaths() {
+    if (CONFIG.cookie) return;
+    for (const file of COOKIE_IMPORT_PATHS) {
+        try {
+            if (!fs.existsSync(file)) continue;
+            const cookie = fs.readFileSync(file, 'utf8').trim();
+            if (!/(?:^|;\s*)(?:sessionid|sessionid_ss|sid_guard|sid_tt)=/.test(cookie)) continue;
+            CONFIG.cookie = cookie;
+            saveConfig();
+            log(`已从 ${file} 自动导入 Cookie(${cookie.length}B)`);
+            return;
+        } catch { /* 读不到就换下一个候选 */ }
+    }
+}
+importCookieFromConventionPaths();
+
+// ── config.json 热重读(只同步 cookie 字段)──
+// 外部工具/用户直接改 config.json 换 Cookie 时,不必重启后端。device_id 等身份字段
+// 不跟着热切——运行中途换设备身份会让缓存键与签名身份错位。
+let lastConfigMtimeMs = 0;
+function refreshCookieFromDisk() {
+    try {
+        const mtime = fs.statSync(CONFIG_PATH).mtimeMs;
+        if (mtime === lastConfigMtimeMs) return;
+        lastConfigMtimeMs = mtime;
+        const disk = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        if (typeof disk.cookie === 'string' && disk.cookie !== CONFIG.cookie) {
+            CONFIG.cookie = disk.cookie;
+            log(`config.json 的 Cookie 已热更新(${CONFIG.cookie.length}B)`);
+        }
+    } catch { /* 文件暂时读不到就沿用内存值 */ }
+}
+refreshCookieFromDisk();
+
 const BDMS_PATH = path.join(CONFIG.client_dir, 'resources', 'app.asar.unpacked', 'bdms.node');
 const CACHE_DIR = path.join(__dirname, 'cache');
 const APP_VERSION = '3.7.0', VERSION_CODE = '30070000', TRON_BUILD = '30070000';
@@ -255,6 +298,7 @@ const server = http.createServer(async (req, res) => {
     const p = u.pathname;
     const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify(obj, null, 1)); };
     try {
+        refreshCookieFromDisk();
         if (p === '/api/health') return send(200, {
             ok: true, device_id: CONFIG.device_id,
             bdms: fs.existsSync(BDMS_PATH), client_dir: CONFIG.client_dir,
@@ -274,6 +318,12 @@ const server = http.createServer(async (req, res) => {
                 return send(200, { ok: true, cookie_len: cookie.length });
             }
             return send(200, { has_cookie: !!CONFIG.cookie, cookie_len: CONFIG.cookie.length });
+        }
+        if (p === '/api/cookie/full') {
+            // 导出 Cookie 给模组(反向同步):登录工具只把 Cookie 落在后端时,模组会话库
+            // 是空的,账号歌单/红心/收藏这些以模组登录态为门槛的功能全都用不了。
+            // 服务只监听 127.0.0.1,导出与 config.json 落盘同 trust 域。
+            return send(200, { cookie: CONFIG.cookie || '' });
         }
         if (p === '/api/search') {
             const q = u.searchParams.get('q'); if (!q) return send(400, { error: '缺少 q' });
