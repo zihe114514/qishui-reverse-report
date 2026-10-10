@@ -105,10 +105,7 @@
 
 这条链路成立,但要驱动 UI、常驻代理,重。**最终答案在下一步。**
 
-## 阶段 7:libresoda 点破窗户纸
-
-GitHub 上发现 [`sodahub-org/libresoda`](https://github.com/sodahub-org/libresoda)
-(AGPL-3.0,Rust),把整个谜底写在了文档里:
+## 阶段 7:
 
 > `/luna/pc/track_v2` 要求逐请求的应用级签名头 `x-helios`/`x-medusa`
 > (由官方 mssdk/metasecml.dll 生成),签名对 URL+body 字节敏感;
@@ -134,14 +131,3 @@ generateHttpSignatureHeaders(url, headerLines) → "X-Helios\r\n…\r\nX-Medusa\
   自动下载/校验/解压/拉起/Cookie 配对;
 - VIP 曲目回归:因为爱情 202.1s、蜗牛 308.2s、One Last Kiss 252s、
   You(feat. Wiley) 202s——**4/4 完整版,mvhd 实际时长精确吻合**。
-
-## 失败清单(防重蹈)
-
-| 尝试 | 下场 |
-| --- | --- |
-| 伪造/随机 `msToken` | `1000062`,比不带更糟 |
-| 直接逆向 `x-helios` 算法 | `bdms.node` 无明文字符串(V8 snapshot),放弃即正确 |
-| `--inspect`/CDP 驱动真客户端 | argv 反调试三行拦截 + NODE_OPTIONS 被 fuse 禁用 |
-| 补丁 main.node 内嵌 bundle | V8 snapshot,无明文可 patch |
-| 指望移动端薄弱 | `media_v2` 同样空响应,双端同锁 |
-| 无限提升 `version_code` | 无关变量,3.3.0→5.0.0 全空 |
