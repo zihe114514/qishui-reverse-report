@@ -261,8 +261,10 @@ async function fetchBuffer(url) {
         }).on('error', reject);
     });
 }
-async function streamTrack(trackId) {
-    const cacheKey = crypto.createHash('sha1').update(String(trackId)).digest('hex').slice(0, 16);
+async function streamTrack(trackId, targetBitrate) {
+    // 缓存键按档位区分：同一首歌不同音质各存一份;不带 quality 参数保持旧键形(升级兼容)。
+    const cacheSeed = targetBitrate == null ? String(trackId) : `${trackId}@${targetBitrate}`;
+    const cacheKey = crypto.createHash('sha1').update(cacheSeed).digest('hex').slice(0, 16);
     const cached = fs.readdirSync(CACHE_DIR).find(f => f.startsWith(cacheKey + '__'));
     if (cached) {
         const metaPath = path.join(CACHE_DIR, cacheKey + '.meta.json');
@@ -276,7 +278,16 @@ async function streamTrack(trackId) {
     if (!purl) throw new Error('无 url_player_info(权益或签名问题): ' + JSON.stringify(j).slice(0, 150));
     const pj = JSON.parse((await fetchBuffer(purl)).toString('utf8'));
     const list = pj.Result?.Data?.PlayInfoList ?? [];
-    const best = list.slice().sort((a, b) => (b.Bitrate ?? 0) - (a.Bitrate ?? 0))[0];
+    // 选档策略(与模组侧 selectAac 同一条规则):未指定取最高;指定目标码率时
+    // 取「≥目标的最小档」,一档都没达标就取最高——宁多勿降,不偷偷给用户降档。
+    const sorted = list.slice().sort((a, b) => (b.Bitrate ?? 0) - (a.Bitrate ?? 0));
+    let best;
+    if (targetBitrate == null) {
+        best = sorted[0];
+    } else {
+        const above = sorted.filter(x => (x.Bitrate ?? 0) >= targetBitrate);
+        best = above.length ? above[above.length - 1] : sorted[0];
+    }
     if (!best?.MainPlayUrl) throw new Error('PlayInfoList 为空');
     const enc = await fetchBuffer(best.MainPlayUrl);
     const result = decryptor.decrypt({ encryptedBuffer: enc, spadeA: best.PlayAuth, media: { title: track.name ?? trackId, artist: (track.artists ?? []).map(a => a.name).join('/') } });
@@ -360,7 +371,10 @@ const server = http.createServer(async (req, res) => {
             return send(200, { http_status: r.status, body: parsed });
         }
         if (p.startsWith('/api/stream/')) {
-            const r = await streamTrack(p.split('/')[3]);
+            // ?quality=<kbps> 选档(选「≥目标的最小档」,缺省取最高);见 streamTrack。
+            const rawQuality = u.searchParams.get('quality');
+            const quality = rawQuality != null && /^\d+$/.test(rawQuality) ? Number(rawQuality) : null;
+            const r = await streamTrack(p.split('/')[3], quality);
             return send(200, { status: 'ok', file_url: '/api/file/' + encodeURIComponent(path.basename(r.file)), cached: r.cached, ...r.meta });
         }
         if (p.startsWith('/api/file/')) {
